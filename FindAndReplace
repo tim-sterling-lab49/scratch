@@ -1,0 +1,66 @@
+import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+
+public class FindAndReplaceMemoryMapped {
+    
+    private static final int BUFFER_SIZE = 64 * 1024; // 64 KB buffer size (can be adjusted)
+
+    public static void findAndReplaceInFile(Path inputPath, Path outputPath, String find, String replace) throws IOException {
+        try (FileChannel inputChannel = FileChannel.open(inputPath, StandardOpenOption.READ);
+             FileChannel outputChannel = FileChannel.open(outputPath, StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+
+            long fileSize = inputChannel.size();
+            long position = 0;
+            
+            // Buffer to handle potential overlapping patterns between chunks
+            StringBuilder carryOverBuffer = new StringBuilder();
+            
+            while (position < fileSize) {
+                long remaining = fileSize - position;
+                int chunkSize = (int) Math.min(BUFFER_SIZE, remaining);
+                
+                // Map the chunk into memory
+                MappedByteBuffer buffer = inputChannel.map(FileChannel.MapMode.READ_ONLY, position, chunkSize);
+                
+                // Read bytes and convert them to a string for processing
+                byte[] byteData = new byte[chunkSize];
+                buffer.get(byteData);
+                String chunk = new String(byteData, StandardCharsets.UTF_8);
+                
+                // Prepend any leftover data from the previous chunk
+                chunk = carryOverBuffer + chunk;
+                
+                // Perform find-and-replace operation on the current chunk
+                String replacedChunk = chunk.replace(find, replace);
+                
+                // Handle the edge case: store the end of the string (up to the length of the pattern) as carry-over for the next chunk
+                int overlapLength = Math.min(chunk.length(), find.length() - 1);
+                carryOverBuffer.setLength(0); // Clear previous carry-over
+                carryOverBuffer.append(chunk.substring(chunk.length() - overlapLength));
+                
+                // Write the replaced data to the output file
+                ByteBuffer outputBuffer = ByteBuffer.wrap(replacedChunk.getBytes(StandardCharsets.UTF_8));
+                outputChannel.write(outputBuffer);
+
+                position += chunkSize;
+            }
+        }
+    }
+
+    public static void main(String[] args) throws IOException {
+        Path inputPath = Paths.get("hugefile.txt");   // Input file path
+        Path outputPath = Paths.get("outputfile.txt"); // Output file path
+
+        // Find and replace patterns
+        String find = "hello";
+        String replace = "hi";
+
+        // Execute the find and replace operation
+        findAndReplaceInFile(inputPath, outputPath, find, replace);
+
+        System.out.println("Find and replace operation completed.");
+    }
+}
